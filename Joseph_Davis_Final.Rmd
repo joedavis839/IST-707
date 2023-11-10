@@ -1,0 +1,579 @@
+---
+title: "Joseph_Davis_Final"
+author: "Joseph Davis"
+date: "2023-06-18"
+output: word_document
+---
+This process began by downloading all the needed packages.
+```{r setup, include=FALSE}
+library(readr)
+library(data.table)
+library(rpart)
+library(arules)
+library(arulesViz)
+library(cluster)
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+library(Cairo)
+library(caret)
+library(e1071)
+library(naivebayes)
+library(class)
+library(CORElearn)
+library(dplyr)
+library(class)
+library(FactoMineR)
+library(randomForest)
+library(dplyr)
+library(zoo)
+library(tidyr)
+library(naniar)
+```
+
+Next the Gross Domestic Product and real gross domestic product were read in as this would be the main focal point for this project. The change in GDP was calculated by creating a lag column and subtracting this column from the current gdp, giving a change in gdp quarter over quarter.
+```{R}
+Gross_Domestic_Product <- read_csv("Definitely Useful/quarterly/Gross Domestic Product.csv")
+Gross_Domestic_Product$change <- c(diff(Gross_Domestic_Product$GDP, lag=1), 0)
+Gross_Domestic_Product$recession <- Gross_Domestic_Product$change
+Gross_Domestic_Product$recession <- replace(Gross_Domestic_Product$recession, Gross_Domestic_Product$recession>0, 0)
+Gross_Domestic_Product$recession <- replace(Gross_Domestic_Product$recession, Gross_Domestic_Product$recession<0, 1)
+RecessionYears <- Gross_Domestic_Product[Gross_Domestic_Product$recession==1,]
+RecessionYears <- RecessionYears[-3,]
+RecessionYears <- RecessionYears[-8:-12,]
+RecessionYears <- RecessionYears[-8,]
+Real_Gross_Domestic_Product <- read_csv("Definitely Useful/quarterly/Real Gross Domestic Product.csv")
+Real_Gross_Domestic_Product$change <- c(diff(Real_Gross_Domestic_Product$GDPC1, lag=1), 0)
+Real_Gross_Domestic_Product$recession <- Real_Gross_Domestic_Product$change
+Real_Gross_Domestic_Product$recession <- replace(Real_Gross_Domestic_Product$recession, Real_Gross_Domestic_Product$recession>0, 0)
+Real_Gross_Domestic_Product$recession <- replace(Real_Gross_Domestic_Product$recession, Real_Gross_Domestic_Product$recession<0, 1)
+```
+
+To better understand the trend of GDP and real GDP over time they were quickly plotted vs. the date. Additionally, the change in GDP was plotted to visualize the increase in volatility over time.
+```{R}
+#Plotting for GDP visualization
+ggplot(Gross_Domestic_Product, aes(x=DATE)) + 
+  geom_line(aes(y=GDP, color="GDP")) + 
+  ylab("GDP") + ggtitle("US GDP")
+
+ggplot(Gross_Domestic_Product, aes(x=DATE)) + 
+  geom_line(aes(y=change, color="GDP change")) + 
+  ylab("GDP") + ggtitle("Change in US GDP")
+
+ggplot(Real_Gross_Domestic_Product, aes(x=DATE)) + 
+  geom_line(aes(y=GDPC1, color="RGDP")) + 
+  ylab("GDP") + ggtitle("Real US GDP")
+
+
+plot(Gross_Domestic_Product$DATE, Gross_Domestic_Product$change)
+plot(Gross_Domestic_Product$DATE, Gross_Domestic_Product$GDP)
+```
+
+Years of recession were calculated by seeing which columns had a negative change in GDP. When 2 of these rows were negative in a row it was considered a recession. Real_RecessionYears is the culmination of all quarters where a recession was present.
+```{R}
+Real_RecessionYears <- Real_Gross_Domestic_Product[Real_Gross_Domestic_Product$recession==1,]
+Real_RecessionYears <- Real_RecessionYears[-5,]
+Real_RecessionYears <- Real_RecessionYears[-8:-10,]
+Real_RecessionYears <- Real_RecessionYears[-10:-11,]
+Real_RecessionYears <- Real_RecessionYears[-12:-14,]
+Real_RecessionYears <- Real_RecessionYears[-17,]
+Real_RecessionYears <- Real_RecessionYears[-19,]
+Real_RecessionYears <- Real_RecessionYears[-21:-23,]
+Real_RecessionYears <- Real_RecessionYears[-25:-27,]
+Real_RecessionYears <- Real_RecessionYears[-17,]
+Better_Dates <- data.table(dates=c(Real_Gross_Domestic_Product$DATE), recession=Real_Gross_Domestic_Product$recession)
+```
+
+To better analyze the data, the recession years dates (quarterly) were changed to monthly.
+```{R}
+DT_month=data.table(Date=as.Date(c(Better_Dates$dates)),Value=c(Better_Dates$recession))
+DT_month[,Month:=month(Date)]
+DT_month[,Year:=year(Date)]
+start_date=min(DT_month$Date)
+end_date=max(DT_month$Date)
+DT_month=data.table(Date=seq.Date(start_date,end_date,by="month"))
+DT_month$recession <- 0
+DT_month$recession[1:6] <- 1
+DT_month$recession[22:27] <- 1
+DT_month$recession[76:84] <- 1
+DT_month$recession[127:132] <- 1
+DT_month$recession[328:336] <- 1
+DT_month$recession[397:402] <- 1
+DT_month$recession[415:420] <- 1
+DT_month$recession[523:528] <- 1
+DT_month$recession[736:747] <- 1
+DT_month$recession[874:879] <- 1
+DT_month$recession[898:903] <- 1
+MonthREC <- data.table(dates=as.Date(c(DT_month$Date)), recession=c(DT_month$recession))
+MonthREC[,Month:=month(dates)]
+MonthREC[,Year:=year(dates)]
+RecessionMonthly <- MonthREC[,-3:-4]
+head(RecessionMonthly, 10)
+```
+
+
+
+
+Next, different monthly statistics were read in, including median consumer price index, personal savings rate, and unemployment rate. This was all compiled into a single dataframe with the dates/recession times.
+```{R}
+MonthlyData <- RecessionMonthly
+Median_Consumer_Price_Index <- read_csv("Definitely Useful/Monthly/Median Consumer Price Index.csv")
+Personal_Saving_Rate <- read_csv("Definitely Useful/Monthly/Personal Saving Rate.csv")
+Unemployment_Rate <- read_csv("Definitely Useful/Monthly/Unemployment Rate.csv")
+Monthly1 <- merge(Unemployment_Rate, Median_Consumer_Price_Index, by  = "DATE",all.x=TRUE)
+Monthly2 <- merge(Monthly1, Personal_Saving_Rate, by  = "DATE",all.x=TRUE)
+colnames(RecessionMonthly)[1] <- 'DATE'
+MonthlyData <- merge(RecessionMonthly, Monthly2, by="DATE", all.x=TRUE)
+```
+To help visualize this data, it was plotted on a scatterplot. All the increases in the cyan line from 0 to 1 indicated a recession.
+
+```{R}
+ggplot(MonthlyData, aes(x=DATE)) + 
+  geom_line(aes(y=UNRATE, color="Unemployment Rate")) + 
+  geom_line(aes(y=MEDCPIM158SFRBCLE, color="Median Consumer Price Index")) + 
+  geom_line(aes(y=PSAVERT, color="Personal Savings Rate")) +
+  geom_line(aes(y=recession,color="Recession?")) +
+  ylab("Percent (%)") + ggtitle("Economic Stats over Time")
+```
+
+The spread of the different variables was understand using histograms. The data was discretized with appropriate breaks.
+```{R}
+hist(MonthlyData$UNRATE)
+hist(MonthlyData$MEDCPIM158SFRBCLE)
+hist(MonthlyData$PSAVERT)
+CleanMonthly=subset(MonthlyData, select=-c(DATE))
+CleanMonthly$UNRATE <- cut(CleanMonthly$UNRATE, breaks = c(0, 2, 4, 6, 8, 10,100) , labels=c("0-2", "2-4", "4-6", "6-8", "8-10", "10+"))
+CleanMonthly$MEDCPIM158SFRBCLE <- cut(CleanMonthly$MEDCPIM158SFRBCLE, breaks = c(-2, 0, 2, 4, 6, 8,100) , labels=c("under 0", "0-2", "2-4", "4-6", "6-8", "8+"))
+CleanMonthly$PSAVERT <- cut(CleanMonthly$PSAVERT, breaks = c( 0, 5, 8, 11, 14 , 100) , labels=c("0-5", "5-8", "8-11", "11-14", "14+"))
+CleanMonthly$recession <- factor(CleanMonthly$recession)
+CleanMonthly$UNRATE <- factor(CleanMonthly$UNRATE)
+CleanMonthly$MEDCPIM158SFRBCLE <- factor(CleanMonthly$MEDCPIM158SFRBCLE)
+CleanMonthly$PSAVERT <- factor(CleanMonthly$PSAVERT)
+
+```
+
+Finally; commercial real estate prices, delinquency rate on credit cards, and household owners equity were read in. This data was quarterly and was converted to monthly data and added to the rest of the monthly statistics. The quarterly data was converted to monthly by interpolating downwards making all 3 months that make up the quarter equal to the quarter statistic. This will be the cleaned data set that will be used as the base for all machine learning. It should be noted that each technique utilized will require unique cleaning of the data prior to use. Any sample/cleaning/removing/interpolating will be discussed when used. Additionally, a year from recession column was added. Later on a 6 months from recession column was added. These were used for prediction (using the machine learning techniques to train data 6 months prior to a recession to predict a recession).
+```{R}
+Commercial_Real_Estate_Prices_for_United_States <- read_csv("Definitely Useful/quarterly/Commercial Real Estate Prices for United States.csv")
+Delinquency_Rate_on_Credit_Card_Loans_All_Commercial_Banks <- read_csv("Definitely Useful/quarterly/Delinquency Rate on Credit Card Loans All Commercial Banks.csv")
+Households_Owners_Equity_in_Real_Estate_Level <- read_csv("Definitely Useful/quarterly/Households Owners Equity in Real Estate Level.csv")
+Households_Owners_Equity_in_Real_Estate_Level$DATE <- as.Date(Households_Owners_Equity_in_Real_Estate_Level$DATE)
+MonthREC <- data.table(dates=as.Date(c(DT_month$Date)), recession=c(DT_month$recession))
+AllMonthlyData <- MonthlyData
+placeholderMonth1 <- merge(AllMonthlyData, Commercial_Real_Estate_Prices_for_United_States, by  = "DATE",all.x=TRUE)
+placeholderMonth2 <- merge(placeholderMonth1, Delinquency_Rate_on_Credit_Card_Loans_All_Commercial_Banks, by = "DATE", all.x=TRUE)
+placeholderMonth3<- merge(placeholderMonth2, Households_Owners_Equity_in_Real_Estate_Level, by = "DATE", all.x=TRUE)
+interpolatedMonthly <- placeholderMonth3
+df1 <- interpolatedMonthly %>% fill(COMREPUSQ159N, .direction = 'down')
+df2 <- df1 %>% fill(DRCCLACBS, .direction = 'down')
+df3 <- df2 %>% fill(OEHRENWBSHNO, .direction = 'down')
+df3$yrfromrec <- lead(df3$recession, n=12)
+tail(df3, 15)
+```
+
+MODELS
+
+This data was used for apriori rule exploration, which can be seen below aside the corresponding visualization plots. Note the apriori rule algorithm and clustering only only takes into consideration the unemployment rate, personal savings rate, and median consumer price index.
+```{R}
+rules<-apriori(data=CleanMonthly, parameter=list(supp=0.01,conf = 0.01), appearance = list(rhs= c('recession=1'), default='lhs'))
+rules<-sort(rules, decreasing=TRUE,by="confidence")
+rules<-sort(rules, decreasing=TRUE,by="confidence")
+inspect(rules)
+ggplot(MonthlyData, aes(x=DATE)) + 
+  geom_line(aes(y=UNRATE, color="Unemployment Rate")) +
+  geom_line(aes(y=recession,color="Recession?")) +
+  ylab("Percent (%)") + ggtitle("Unemployment over Time")
+
+ggplot(MonthlyData[200:913], aes(x=DATE)) + 
+  geom_line(aes(y=PSAVERT, color="Personal Savings Rate")) +
+  geom_line(aes(y=recession,color="Recession?")) +
+  ylab("Percent (%)") + ggtitle("Personal Savings Rate over Time")
+```
+
+Clustering using the same dataset, omitting NAs, was also completed.
+```{R}
+NAmonthnorec <- na.omit(MonthlyData)
+Monthnorec <- subset(NAmonthnorec, select = -c(recession, DATE) )
+monthlymodel <- kmeans(Monthnorec, 3)
+cluster_assignment <- data.frame(NAmonthnorec, monthlymodel$cluster)
+clusters <- subset(cluster_assignment, select = c(recession, monthlymodel.cluster))
+
+monthcluster <- clusters %>% group_by(recession,monthlymodel.cluster) %>% 
+  summarise(total_count=n(),.groups = 'drop') %>%
+  as.data.frame()
+
+ggplot(monthcluster, aes(fill=recession, y=total_count, x=monthlymodel.cluster)) + 
+  geom_bar(position="stack", stat="identity") + ggtitle('Cluster')
+
+```
+
+
+
+
+
+
+
+A decision tree was created to classify 12 months from recession. The data was split 70/30 for all techniques. For the decision tree specifically the columns were factorized and a confusion matrix was created to test efficacy.
+```{R}
+sample70 <- sample(c(TRUE, FALSE), nrow(df3), replace=TRUE, prob=c(0.3,0.7))
+test70  <- df3[sample70, ]
+train70   <- df3[!sample70, ]
+test70$recession <- factor(test70$recession)
+test70$yrfromrec<- factor(test70$yrfromrec)
+train70$recession <- factor(train70$recession)
+train70$yrfromrec <- factor(train70$yrfromrec)
+train70$OEHRENWBSHNO <- as.integer(train70$OEHRENWBSHNO)
+usefultrain70 <- train70[,c(-1,-2)]
+usefultest70 <- test70[,c(-1,-2)]
+#Decision Tree
+fit1 <- rpart(yrfromrec ~ ., data = usefultrain70, method="class")
+predicted <- predict(fit1,usefultest70, type="class")
+fancyRpartPlot(fit1)
+confusion <- confusionMatrix(predicted, test70$yrfromrec)
+confusion
+```
+
+
+
+
+Naive Bayes was performed on the same dataset. No major changes were made to the testing and training data between Decision Tree and Naive Bayes.
+```{R}
+#Naive Bayes
+nolabel70test <- usefultrain70
+nolabel70test <- nolabel70test[,c(-7)]
+Test_justLabel<- train70$yrfromrec
+NB_object<- naive_bayes(yrfromrec~., data=train70, na.action = na.pass)
+NB_prediction <- predict(NB_object, nolabel70test)
+confusionNB <- confusionMatrix(NB_prediction, Test_justLabel)
+round(confusionNB$overall[1]*100,2)
+confusionNB$table
+confusionNB
+```
+
+Major changes were performed on the data for the following 3 machine learning techniques. The data that was previously NA was filled upwards, so the first date of data became the value for all NA values above it. Normally, extrapolation to this degree isn't ideal, however the models created had reasonable efficacy. The data with this level of filling will be referred to as approximated data.
+```{R}
+proxdata <- df3
+adf1 <- proxdata %>% fill(COMREPUSQ159N, .direction = 'up')
+adf2 <- adf1 %>% fill(DRCCLACBS, .direction = 'up')
+adf3 <- adf2 %>% fill(OEHRENWBSHNO, .direction = 'up')
+adf4 <- adf3 %>% fill(UNRATE, .direction = 'up')
+adf5 <- adf4 %>% fill(MEDCPIM158SFRBCLE, .direction = 'up')
+adf6 <- adf5 %>% fill(PSAVERT, .direction = 'up')
+approxdata <- adf6
+approxdata <- approxdata[,c(-1,-2)]
+approxsample70 <- sample(c(TRUE, FALSE), nrow(approxdata), replace=TRUE, prob=c(0.3,0.7))
+approxtest70  <- approxdata[approxsample70, ]
+approxtrain70   <- approxdata[!approxsample70, ]
+approxtest70$yrfromrec<- factor(approxtest70$yrfromrec)
+approxtrain70$yrfromrec <- factor(approxtrain70$yrfromrec)
+approxtrain70$OEHRENWBSHNO <- as.integer(approxtrain70$OEHRENWBSHNO)
+approxtest70$OEHRENWBSHNO <- as.integer(approxtest70$OEHRENWBSHNO)
+```
+
+This approximated data was trained for KNN and can be seen below. again, a 70/30 split was used.
+```{R}
+approxtrain70 <- na.omit(approxtrain70)
+approxtest70 <- na.omit(approxtest70)
+predKNN <- knn(train=approxtrain70, test=approxtest70, cl=approxtrain70$yrfromrec, k=1)
+mylabel_col <- approxtest70$yrfromrec
+newpred1=cbind(mylabel_col, predKNN)
+confusionMatrix(mylabel_col, predKNN)
+```
+
+
+SVM was performed with the approximated data and the results can be seen below in a confusion matrix.
+```{R}
+#SVM with approximated data (92.04% accurate, the same as no information)
+SVMtrain70 <- approxtrain70
+
+SVMtest70 <- approxtest70
+
+svm<- svm(yrfromrec~., data = SVMtrain70)
+pred=predict(svm, newdata=SVMtest70, type=C)
+confusionNB <- confusionMatrix(pred, SVMtest70$yrfromrec)
+confusionNB
+```
+To demonstrate the efficacy of the approximated data, an SVM without approximated data was used and showed an accuracy no greater than the no information rate.
+```{R}
+#SVM with no approximates gave an accuracy of 87.27%, again identical to the no information rate
+SVMtrain70 <- usefultrain70
+
+SVMtest70 <- usefultest70
+SVMtest70noNA <- na.omit(SVMtest70)
+svm<- svm(yrfromrec~., data = SVMtrain70)
+pred=predict(svm, newdata=SVMtest70, type=C)
+confusionNB <- confusionMatrix(pred, SVMtest70noNA$yrfromrec)
+confusionNB
+```
+
+The approximated data was next used in a random forest with 1000 trees and the resulting confusion matrix can be seen below.
+```{R}
+#Random Forest
+RFSet <- df3[1:900]
+RFSet
+RFtrain70 <- approxtrain70
+RFtest70 <- approxtest70
+rfm <- randomForest(yrfromrec~., data=RFtrain70, ntree=1000)
+print(rfm)
+predRF <- predict(rfm, RFtest70, type=c("class"))
+confusionRF <- confusionMatrix(predRF, RFtest70$yrfromrec)
+confusionRF
+```
+The exact same approach as before was done on data except with a 6 month lead instead of a 12 month lead. As before, a 70/30 split was used for all the training/testing and the decision tree and naive bayes used the non-approximated data. The approximated data was used for KNN, SVM, and Random Forest. To avoid redundancy, these will be shown in quick succession.
+```{R}
+month6 <- df3
+month6$yrfromrec <- lead(df3$recession, n=6)
+#training and testing sets
+sample70 <- sample(c(TRUE, FALSE), nrow(df3), replace=TRUE, prob=c(0.3,0.7))
+test70  <- month6[sample70, ]
+train70   <- month6[!sample70, ]
+test70$recession <- factor(test70$recession)
+test70$yrfromrec<- factor(test70$yrfromrec)
+train70$recession <- factor(train70$recession)
+train70$yrfromrec <- factor(train70$yrfromrec)
+train70$OEHRENWBSHNO <- as.integer(train70$OEHRENWBSHNO)
+test70$OEHRENWBSHNO <- as.integer(test70$OEHRENWBSHNO)
+usefultrain70 <- train70[,c(-1,-2)]
+usefultest70 <- test70[,c(-1,-2)]
+summary(usefultest70)
+```
+```{R}
+#Decision Tree
+fit1 <- rpart(yrfromrec ~ ., data = usefultrain70, method="class")
+summary(fit1)
+predicted <- predict(fit1,usefultest70, type="class")
+fancyRpartPlot(fit1)
+confusion <- confusionMatrix(predicted, test70$yrfromrec)
+confusion
+```
+
+```{R}
+#Naive Bayes
+nolabel70test <- usefultrain70
+nolabel70test <- nolabel70test[,c(-7)]
+Test_justLabel<- train70$yrfromrec
+NB_object<- naive_bayes(yrfromrec~., data=train70, na.action = na.pass)
+NB_prediction <- predict(NB_object, nolabel70test)
+confusionNB <- confusionMatrix(NB_prediction, Test_justLabel)
+confusionNB
+round(confusionNB$overall[1]*100,2)
+confusionNB$table
+```
+
+```{R}
+bproxdata <- month6
+bdf1 <- bproxdata %>% fill(COMREPUSQ159N, .direction = 'up')
+bdf2 <- bdf1 %>% fill(DRCCLACBS, .direction = 'up')
+bdf3 <- bdf2 %>% fill(OEHRENWBSHNO, .direction = 'up')
+bdf4 <- bdf3 %>% fill(UNRATE, .direction = 'up')
+bdf5 <- bdf4 %>% fill(MEDCPIM158SFRBCLE, .direction = 'up')
+bdf6 <- bdf5 %>% fill(PSAVERT, .direction = 'up')
+bapproxdata <- bdf6
+bapproxdata <- bapproxdata[,c(-1,-2)]
+bapproxsample70 <- sample(c(TRUE, FALSE), nrow(bapproxdata), replace=TRUE, prob=c(0.3,0.7))
+bapproxtest70  <- bapproxdata[bapproxsample70, ]
+bapproxtrain70   <- bapproxdata[!bapproxsample70, ]
+bapproxtest70$yrfromrec<- factor(bapproxtest70$yrfromrec)
+bapproxtrain70$yrfromrec <- factor(bapproxtrain70$yrfromrec)
+bapproxtrain70$OEHRENWBSHNO <- as.integer(bapproxtrain70$OEHRENWBSHNO)
+bapproxtest70$OEHRENWBSHNO <- as.integer(bapproxtest70$OEHRENWBSHNO)
+
+```
+
+```{R}
+#remove the last few rows (the year from recession are NA)
+bapproxtrain70 <- na.omit(bapproxtrain70)
+bapproxtest70 <- na.omit(bapproxtest70)
+summary(bapproxtrain70)
+summary(bapproxtest70)
+predKNN <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=1)
+
+mylabel_col <- bapproxtest70$yrfromrec
+newpred1 <- data.frame(mylabel_col, predKNN)
+confusionMatrix(mylabel_col, predKNN)
+common <- data.frame(mylabel_col == predKNN)
+KNN1 <- sum(common)/length(common$mylabel_col)
+KNN1
+```
+```{R}
+#SVM with approximated data (92.04% accurate, the same as no information)
+SVMtrain70 <- bapproxtrain70
+SVMtest70 <- bapproxtest70
+svm<- svm(yrfromrec~., data = SVMtrain70)
+pred=predict(svm, newdata=SVMtest70, type=C)
+confusionSVM <- confusionMatrix(pred, SVMtest70$yrfromrec)
+confusionSVM
+```
+
+```{R}
+#SVM with no approximates gave an accuracy of 87.27%, again identical to the no information rate
+SVMtrain70 <- usefultrain70
+SVMtest70 <- usefultest70
+SVMtest70noNA <- na.omit(SVMtest70)
+svm<- svm(yrfromrec~., data = SVMtrain70)
+pred=predict(svm, newdata=SVMtest70, type=C)
+confusionNB <- confusionMatrix(pred, SVMtest70noNA$yrfromrec)
+confusionNB
+```
+
+```{R}
+#Random Forest
+RFSet <- month6[1:900]
+RFtrain70 <- bapproxtrain70
+RFtest70 <- bapproxtest70
+rfm <- randomForest(yrfromrec~., data=RFtrain70, ntree=100)
+predRF <- predict(rfm, RFtest70, type=c("class"))
+confusionRF <- confusionMatrix(predRF, RFtest70$yrfromrec)
+confusionRF
+```
+
+The 12-month KNN, 6-month KNN, and 6-month random forest models were the most efficacious and will therefore be explored further. The k-value was adjusted from 1-10 for both the 12 and 6 month predictions. Their accuracy is plotted below.
+```{R}
+#KNN explored further (6-month)
+bapproxtrain70 <- na.omit(bapproxtrain70)
+bapproxtest70 <- na.omit(bapproxtest70)
+
+predKNN1 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=1)
+mylabel_col1 <- bapproxtest70$yrfromrec
+common1 <- data.frame(mylabel_col1 == predKNN1)
+KNN1 <- sum(common1)/length(common1$mylabel_col1)
+
+predKNN2 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=2)
+mylabel_col2 <- bapproxtest70$yrfromrec
+common2 <- data.frame(mylabel_col2 == predKNN2)
+KNN2 <- sum(common2)/length(common2$mylabel_col2)
+
+predKNN3 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=3)
+mylabel_col3 <- bapproxtest70$yrfromrec
+common3 <- data.frame(mylabel_col3 == predKNN3)
+KNN3 <- sum(common3)/length(common3$mylabel_col3)
+
+predKNN4 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=4)
+mylabel_col4 <- bapproxtest70$yrfromrec
+common4 <- data.frame(mylabel_col4 == predKNN4)
+KNN4 <- sum(common4)/length(common4$mylabel_col4)
+
+predKNN5 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=5)
+mylabel_col5 <- bapproxtest70$yrfromrec
+common5 <- data.frame(mylabel_col5 == predKNN5)
+KNN5 <- sum(common5)/length(common5$mylabel_col5)
+
+predKNN6 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=6)
+mylabel_col6 <- bapproxtest70$yrfromrec
+common6 <- data.frame(mylabel_col6 == predKNN6)
+KNN6 <- sum(common6)/length(common6$mylabel_col6)
+
+predKNN7 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=7)
+mylabel_col7 <- bapproxtest70$yrfromrec
+common7 <- data.frame(mylabel_col7 == predKNN7)
+KNN7 <- sum(common7)/length(common7$mylabel_col7)
+
+predKNN8 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=8)
+mylabel_col8 <- bapproxtest70$yrfromrec
+common8 <- data.frame(mylabel_col8 == predKNN8)
+KNN8 <- sum(common8)/length(common8$mylabel_col8)
+
+predKNN9 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=9)
+mylabel_col9 <- bapproxtest70$yrfromrec
+common9 <- data.frame(mylabel_col9 == predKNN9)
+KNN9 <- sum(common9)/length(common9$mylabel_col9)
+
+predKNN10 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=10)
+mylabel_col10 <- bapproxtest70$yrfromrec
+common10 <- data.frame(mylabel_col10 == predKNN10)
+KNN10 <- sum(common10)/length(common10$mylabel_col10)
+
+K_value <- c(1:10)
+Accuracy <- c(KNN1, KNN2, KNN3, KNN4, KNN5, KNN6, KNN7, KNN8, KNN9, KNN10)
+KNNResults <- data.frame(K_value, Accuracy)
+KNNResults
+
+ggplot(KNNResults, aes(K_value, Accuracy))+ geom_point() +ggtitle(label = "KNN k-value vs. Accuracy (6-Month)") + geom_hline(yintercept=.9345,linetype='dashed', color="red")
+
+```
+
+```{R}
+#KNN 12-month
+bapproxtrain70 <- na.omit(approxtrain70)
+bapproxtest70 <- na.omit(approxtest70)
+
+predKNN1 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=1)
+mylabel_col1 <- bapproxtest70$yrfromrec
+common1 <- data.frame(mylabel_col1 == predKNN1)
+KNN1 <- sum(common1)/length(common1$mylabel_col1)
+
+predKNN2 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=2)
+mylabel_col2 <- bapproxtest70$yrfromrec
+common2 <- data.frame(mylabel_col2 == predKNN2)
+KNN2 <- sum(common2)/length(common2$mylabel_col2)
+
+predKNN3 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=3)
+mylabel_col3 <- bapproxtest70$yrfromrec
+common3 <- data.frame(mylabel_col3 == predKNN3)
+KNN3 <- sum(common3)/length(common3$mylabel_col3)
+
+predKNN4 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=4)
+mylabel_col4 <- bapproxtest70$yrfromrec
+common4 <- data.frame(mylabel_col4 == predKNN4)
+KNN4 <- sum(common4)/length(common4$mylabel_col4)
+
+predKNN5 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=5)
+mylabel_col5 <- bapproxtest70$yrfromrec
+common5 <- data.frame(mylabel_col5 == predKNN5)
+KNN5 <- sum(common5)/length(common5$mylabel_col5)
+
+predKNN6 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=6)
+mylabel_col6 <- bapproxtest70$yrfromrec
+common6 <- data.frame(mylabel_col6 == predKNN6)
+KNN6 <- sum(common6)/length(common6$mylabel_col6)
+
+predKNN7 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=7)
+mylabel_col7 <- bapproxtest70$yrfromrec
+common7 <- data.frame(mylabel_col7 == predKNN7)
+KNN7 <- sum(common7)/length(common7$mylabel_col7)
+
+predKNN8 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=8)
+mylabel_col8 <- bapproxtest70$yrfromrec
+common8 <- data.frame(mylabel_col8 == predKNN8)
+KNN8 <- sum(common8)/length(common8$mylabel_col8)
+
+predKNN9 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=9)
+mylabel_col9 <- bapproxtest70$yrfromrec
+common9 <- data.frame(mylabel_col9 == predKNN9)
+KNN9 <- sum(common9)/length(common9$mylabel_col9)
+
+predKNN10 <- knn(train=bapproxtrain70, test=bapproxtest70, cl=bapproxtrain70$yrfromrec, k=10)
+mylabel_col10 <- bapproxtest70$yrfromrec
+common10 <- data.frame(mylabel_col10 == predKNN10)
+KNN10 <- sum(common10)/length(common10$mylabel_col10)
+
+K_value <- c(1:10)
+Accuracy <- c(KNN1, KNN2, KNN3, KNN4, KNN5, KNN6, KNN7, KNN8, KNN9, KNN10)
+KNNResults <- data.frame(K_value, Accuracy)
+KNNResults
+ggplot(KNNResults, aes(K_value, Accuracy))+ geom_point() +ggtitle(label = "KNN k-value vs. Accuracy (12-Month)") + geom_hline(yintercept=.9415,linetype='dashed', color="red")
+
+```
+The 6-month random forest model was tested again, this time instead of approximate data na.roughfix was used. 10,000 trees were included and the 70/30 split was again employed. A variable importance plot was also generated to help understand the value of each variable.
+```{R}
+RFSet <- month6[1:907]
+RFSet <- RFSet[,c(-1,-2)]
+sample70 <- sample(c(TRUE, FALSE), nrow(RFSet), replace=TRUE, prob=c(0.3,0.7))
+RFsettest70  <- RFSet[sample70, ]
+RFsettrain70   <- RFSet[!sample70, ]
+RFsettest70$yrfromrec<- factor(RFsettest70$yrfromrec)
+RFsettrain70$yrfromrec <- factor(RFsettrain70$yrfromrec)
+RFsettrain70$OEHRENWBSHNO <- as.integer(RFsettrain70$OEHRENWBSHNO)
+RFsettest70$OEHRENWBSHNO <- as.integer(RFsettest70$OEHRENWBSHNO)
+rfm <- randomForest(yrfromrec~., data=RFsettrain70, ntree=10000, na.action = na.roughfix)
+print(rfm)
+predRF <- predict(rfm, RFsettest70, type=c("class"))
+confusionRF <- confusionMatrix(predRF, RFsettest70$yrfromrec)
+confusionRF
+varImpPlot(rfm)
+```
+
+
+
+
+
